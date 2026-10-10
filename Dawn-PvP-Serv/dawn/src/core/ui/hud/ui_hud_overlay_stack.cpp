@@ -1,0 +1,179 @@
+#include <array>
+#include <cstddef>
+#include <imgui.h>
+
+#include "../scaling/dpi/ui_dpi_scaling.h"
+#include "overlay.h"
+#include "overlays/ui_hud_logo_overlay.h"
+#include "overlays/ui_hud_session_overlay.h"
+#include "overlays/ui_hud_status_overlay.h"
+#include "store/hud_settings_store.h"
+
+namespace dawn::core::ui::hud {
+namespace {
+
+struct Entry {
+    const char* displayName;
+    // must outlive every table change
+    const char* storageKey;
+    const char* windowId;
+    void (*draw)() noexcept;
+    bool startsOn;
+};
+
+constexpr float kViewportMargin = 24.0F;
+constexpr float kOverlayGap = 8.0F;
+constexpr ImGuiWindowFlags kOverlayFlags =
+    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav
+    | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize
+    | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoMove;
+constexpr std::size_t kOverlayCount = static_cast<std::size_t>(Overlay::count);
+constexpr std::size_t kStatusLineCount = static_cast<std::size_t>(StatusLine::count);
+constexpr std::size_t kSwitchCount = kOverlayCount + kStatusLineCount;
+
+constexpr std::array<Entry, kOverlayCount> kOverlays{
+    Entry{"Restoration", "restoration_card", "##restoration_hud_card", &overlays::logo::draw, false},
+    Entry{
+        "Current Status", "current_status", "##restoration_hud_status", &overlays::status::draw, false},
+    Entry{"Session", "session", "##restoration_hud_session", &overlays::session::draw, false},
+};
+
+struct LineEntry {
+    const char* displayName;
+    const char* storageKey;
+    bool startsOn;
+};
+
+constexpr std::array<LineEntry, kStatusLineCount> kStatusLines{
+    LineEntry{"Activity", "status_activity", true},
+    LineEntry{"Bubble", "status_bubble", true},
+    LineEntry{"Slice set", "status_slice_set", true},
+    LineEntry{"Closest spawn", "status_closest_spawn", true},
+};
+
+[[nodiscard]] constexpr std::array<bool, kOverlayCount> starting_state() noexcept {
+    std::array<bool, kOverlayCount> state{};
+    for (std::size_t index = 0; index < state.size(); ++index) {
+        state[index] = kOverlays[index].startsOn;
+    }
+    return state;
+}
+
+[[nodiscard]] constexpr std::array<bool, kStatusLineCount> starting_line_state() noexcept {
+    std::array<bool, kStatusLineCount> state{};
+    for (std::size_t index = 0; index < state.size(); ++index) {
+        state[index] = kStatusLines[index].startsOn;
+    }
+    return state;
+}
+
+// only the presentation thread reads or writes this
+std::array<bool, kOverlayCount> g_enabled{starting_state()};
+std::array<bool, kStatusLineCount> g_lineEnabled{starting_line_state()};
+
+[[nodiscard]] bool in_range(Overlay overlay) noexcept {
+    return static_cast<std::size_t>(overlay) < kOverlayCount;
+}
+
+[[nodiscard]] bool in_range(StatusLine line) noexcept {
+    return static_cast<std::size_t>(line) < kStatusLineCount;
+}
+
+[[nodiscard]] std::array<store::Switch, kSwitchCount> switch_state() noexcept {
+    std::array<store::Switch, kSwitchCount> switches{};
+    for (std::size_t index = 0; index < kOverlayCount; ++index) {
+        switches[index] = {kOverlays[index].storageKey, g_enabled[index]};
+    }
+    for (std::size_t index = 0; index < kStatusLineCount; ++index) {
+        switches[kOverlayCount + index] = {kStatusLines[index].storageKey, g_lineEnabled[index]};
+    }
+    return switches;
+}
+
+// one file holds every switch, so a partial save would drop the rest
+void save_switches() noexcept {
+    const std::array<store::Switch, kSwitchCount> switches = switch_state();
+    (void)store::save(switches);
+}
+
+[[nodiscard]] float draw_overlay(const Entry& entry, const ImVec2& position) noexcept {
+    ImGui::SetNextWindowPos(position, ImGuiCond_Always);
+    const bool submitContents = ImGui::Begin(entry.windowId, nullptr, kOverlayFlags);
+    if (submitContents) {
+        entry.draw();
+    }
+    const float height = ImGui::GetWindowSize().y;
+    ImGui::End();
+    return height;
+}
+
+} // namespace
+
+void initialize(void* module) noexcept {
+    store::initialize(module);
+    std::array<store::Switch, kSwitchCount> switches = switch_state();
+    store::load(switches);
+    for (std::size_t index = 0; index < kOverlayCount; ++index) {
+        g_enabled[index] = switches[index].on;
+    }
+    for (std::size_t index = 0; index < kStatusLineCount; ++index) {
+        g_lineEnabled[index] = switches[kOverlayCount + index].on;
+    }
+}
+
+void shutdown() noexcept {
+    store::shutdown();
+}
+
+const char* display_name(Overlay overlay) noexcept {
+    return in_range(overlay) ? kOverlays[static_cast<std::size_t>(overlay)].displayName : "";
+}
+
+bool enabled(Overlay overlay) noexcept {
+    return in_range(overlay) && g_enabled[static_cast<std::size_t>(overlay)];
+}
+
+void set_enabled(Overlay overlay, bool on) noexcept {
+    if (!in_range(overlay) || g_enabled[static_cast<std::size_t>(overlay)] == on) {
+        return;
+    }
+    g_enabled[static_cast<std::size_t>(overlay)] = on;
+    save_switches();
+}
+
+const char* display_name(StatusLine line) noexcept {
+    return in_range(line) ? kStatusLines[static_cast<std::size_t>(line)].displayName : "";
+}
+
+bool enabled(StatusLine line) noexcept {
+    return in_range(line) && g_lineEnabled[static_cast<std::size_t>(line)];
+}
+
+void set_enabled(StatusLine line, bool on) noexcept {
+    if (!in_range(line) || g_lineEnabled[static_cast<std::size_t>(line)] == on) {
+        return;
+    }
+    g_lineEnabled[static_cast<std::size_t>(line)] = on;
+    save_switches();
+}
+
+bool draw(bool interfaceEnabled) noexcept {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (!interfaceEnabled || viewport == nullptr) {
+        return false;
+    }
+    const float margin = scaling::dpi::pixels(kViewportMargin);
+    const float gap = scaling::dpi::pixels(kOverlayGap);
+    ImVec2 position{viewport->WorkPos.x + margin, viewport->WorkPos.y + margin};
+    bool drawn = false;
+    for (std::size_t index = 0; index < kOverlayCount; ++index) {
+        if (!g_enabled[index]) {
+            continue;
+        }
+        position.y += draw_overlay(kOverlays[index], position) + gap;
+        drawn = true;
+    }
+    return drawn;
+}
+
+} // namespace dawn::core::ui::hud

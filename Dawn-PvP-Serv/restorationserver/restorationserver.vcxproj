@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{B47EF658-21A2-4D4D-A13B-EBC62C5FC1B8}</ProjectGuid>
+    <RootNamespace>restorationserver</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <ProjectName>RestorationServer</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(ProjectDir)..\build-config\one-hook.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <TargetName>restoration-server</TargetName>
+    <OutDir>$(ProjectDir)..\build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)..\build\obj\$(Platform)\$(Configuration)\RestorationServer\</IntDir>
+    <ExternalIncludePath>$(ExternalIncludePath);$(ProjectDir)..\Dawn\vendor\detours;$(ProjectDir)..\Dawn\vendor\imgui;$(ProjectDir)..\Dawn\vendor\imgui\backends;$(ProjectDir)..\Dawn\vendor\lua\src</ExternalIncludePath>
+    <VcpkgApplocalDeps>false</VcpkgApplocalDeps>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <ConformanceMode>true</ConformanceMode>
+      <!-- Keep workstation builds bounded through CL_MPCount; never launch one worker per source. -->
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\Dawn\src;$(ProjectDir)..\Dawn\vendor\detours;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <TreatAngleIncludeAsExternal>true</TreatAngleIncludeAsExternal>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <PreprocessorDefinitions>RESTORATION_DEDICATED_SERVER=1;WIN32;_WINDOWS;_CONSOLE;WIN32_LEAN_AND_MEAN;NOMINMAX;IMGUI_USER_CONFIG=&quot;core/ui/imgui_user_config.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(NativePackageTrust)'=='true'">RESTORATION_NATIVE_PACKAGE_TRUST=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <!-- Fixed-size protocol encoders intentionally retain bounded account snapshots. Reserve
+           enough worker stack for their deepest validated prepare/publish transaction. -->
+      <StackReserveSize>8388608</StackReserveSize>
+      <AdditionalDependencies>kernel32.lib;advapi32.lib;bcrypt.lib;crypt32.lib;user32.lib;gdi32.lib;dwmapi.lib;d3dcompiler.lib;shell32.lib;ws2_32.lib;synchronization.lib;ole32.lib;windowscodecs.lib;winsqlite3.lib;winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\restoration_server.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\account_codec.cpp" />
+    <ClCompile Include="src\account_http.cpp" />
+    <ClCompile Include="src\activity_codec.cpp" />
+    <ClCompile Include="src\account_store.cpp" />
+    <ClCompile Include="src\realtime_store.cpp" />
+    <ClCompile Include="src\https_client.cpp" />
+    <ClCompile Include="src\expansions.cpp" />
+    <ClCompile Include="src\roles.cpp" />
+    <ClCompile Include="src\platform_api\json_writer.cpp" />
+    <ClCompile Include="src\platform_api\platform_api.cpp" />
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="..\Dawn\src\**\*.cpp" Exclude="..\Dawn\src\dllmain.cpp" />
+
+    <ClCompile Update="..\Dawn\src\client\network\native_routes\discovery_runtime.cpp">
+      <ObjectFileName>$(IntDir)native_discovery_runtime.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Dawn\vendor\detours\*.cpp" />
+    <ClCompile Include="..\Dawn\vendor\imgui\*.cpp" />
+    <ClCompile Include="..\Dawn\vendor\imgui\backends\*.cpp" />
+  </ItemGroup>
+  <!-- Lua 5.4 for the mission executor's script loader. Only the core, auxiliary and base
+       libraries are linked; compiled as C++ so a builder error unwinds through the loader. -->
+  <ItemGroup>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lapi.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lcode.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lctype.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\ldebug.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\ldo.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\ldump.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lfunc.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lgc.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\llex.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lmem.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lobject.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lopcodes.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lparser.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lstate.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lstring.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\ltable.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\ltm.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lundump.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lvm.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lzio.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lauxlib.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Dawn\vendor\lua\src\lbaselib.c"><CompileAs>CompileAsCpp</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel><TreatWarningAsError>false</TreatWarningAsError><PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions><ObjectFileName>$(IntDir)lua\</ObjectFileName></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\account_codec.h" />
+    <ClInclude Include="src\account_http.h" />
+    <ClInclude Include="src\activity_codec.h" />
+    <ClInclude Include="src\account_store.h" />
+    <ClInclude Include="src\realtime_store.h" />
+    <ClInclude Include="src\platform_api\json_writer.h" />
+    <ClInclude Include="src\platform_api\platform_api.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

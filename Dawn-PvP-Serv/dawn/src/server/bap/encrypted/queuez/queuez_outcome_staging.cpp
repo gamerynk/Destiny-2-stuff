@@ -1,0 +1,507 @@
+#include "queuez_outcome_staging.h"
+
+#include <limits>
+
+#include "../../../../core/logging/log.h"
+#include "../../../../middleware/datagen/definitions.h"
+#include "../../../../middleware/secure_channel/runtime.h"
+#include "queuez_state_validation.h"
+
+namespace dawn::server::bap::encrypted::queuez {
+namespace {
+
+[[nodiscard]] constexpr bool moves_social_roster(std::size_t equipmentSlotIndex) noexcept {
+    namespace inventory = state::account::inventory;
+    return equipmentSlotIndex <= static_cast<std::size_t>(inventory::EquipmentSlot::classItem)
+           || equipmentSlotIndex == static_cast<std::size_t>(inventory::EquipmentSlot::emblem);
+}
+
+} // namespace
+
+bool stage_service_outcome(Scratch& scratch,
+                           const SessionState& before,
+                           const ServiceOutcome& outcome,
+                           std::span<const std::byte, state::kAesKeySize> key,
+                           std::array<std::byte, state::kBapNonceSize>& nonce,
+                           std::span<std::byte> response,
+                           std::size_t& written,
+                           StagedPublication& publication,
+                           InlineSubscriptionUpdate* inlineUpdate) noexcept {
+    publication = {};
+    SessionState after{};
+    bool armsRepush = false;
+    bool armsBannerRepush = false;
+    std::uint64_t bannerRoot = 0;
+    std::uint64_t socialRosterRoot = 0;
+    const auto* equipment = transaction_if<EquipmentSwapTransaction>(outcome);
+    const auto* itemState = transaction_if<ItemStateTransaction>(outcome);
+    const auto* socket = transaction_if<SocketPlugTransaction>(outcome);
+    const auto* itemAcquisition = transaction_if<ItemAcquisitionTransaction>(outcome);
+    const auto* profileAcquisition = transaction_if<ProfileItemAcquisitionTransaction>(outcome);
+    const auto* itemDismantle = transaction_if<ItemDismantleTransaction>(outcome);
+    const auto* vaultTransfer = transaction_if<VaultTransferTransaction>(outcome);
+    const auto* abilitySelection = transaction_if<AbilitySelectionTransaction>(outcome);
+    publication.rearmsSocialRosterRepush =
+        equipment != nullptr && moves_social_roster(equipment->pending.equipmentSlotIndex);
+    if (outcome.hasSubscription) {
+        push::append_queuez_notification(scratch,
+                                         before,
+                                         outcome.subscription,
+                                         key,
+                                         nonce,
+                                         response,
+                                         written,
+                                         after,
+                                         armsRepush,
+                                         armsBannerRepush,
+                                         &publication.foreignAppearance,
+                                         inlineUpdate);
+        bannerRoot = outcome.subscription.familyRootSoid;
+        if (outcome.subscription.familyType == kSocialRosterFamilyType) {
+            socialRosterRoot = outcome.subscription.familyRootSoid;
+        }
+    } else if (outcome.hasUnsubscription) {
+        if (outcome.unsubscription.familyType == kBannerFamilyType
+            && outcome.unsubscription.familyRootSoid != state::account_snapshot().primarySoid) {
+            publication.foreignAppearanceUnsubscribeRoot =
+                outcome.unsubscription.familyRootSoid;
+        }
+        stage_unsubscription(before,
+                             outcome.unsubscription.familyType,
+                             outcome.unsubscription.familyRootSoid,
+                             after);
+    } else if (outcome.hasChangeCharacter) {
+        if (!push::append_change_character_notification(
+                scratch, outcome.changeCharacter, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=change result=fail");
+            return true;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = outcome.changeCharacter.after;
+    } else if (equipment != nullptr) {
+        // body processing already staged this after-image so the opcode-403 response could promise its
+        // version; reuse it, a second revision would make the response and Family-4 ladder disagree
+        const EquipmentSwap& swap = equipment->update;
+        if (!valid(swap.after) || swap.characterSoid != equipment->pending.characterSoid
+            || swap.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || swap.after.family4Version != before.family4Version + 1
+            || !push::append_equipment_swap_notification(
+                scratch, swap, equipment->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=equip result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = swap.after;
+        // Family 0 owns the rendered appearance; update the resident character in place, release and
+        // re-add of the same key tears down the ship/banner binding
+        if (after.family0Active) {
+            CharacterAppearanceRefresh refresh{};
+            if (!stage_character_appearance_refresh(
+                    after, equipment->pending.characterSoid, refresh)
+                || !push::append_equipment_appearance_refresh_notification(
+                    scratch, refresh, equipment->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=equip_appearance result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+        // Family 3 holds a separate copy of the appearance record; publish character first, roster second
+        // at one +1 revision. Failure keeps all three ladders and State private
+        if (after.family3Active) {
+            RosterAppearanceRefresh refresh{};
+            if (!stage_roster_appearance_refresh(
+                    after, equipment->pending.characterSoid, true, refresh)
+                || !push::append_equipment_roster_refresh_notification(
+                    scratch, refresh, equipment->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=equip_roster result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+    } else if (itemState != nullptr) {
+        const EquipmentSwap& update = itemState->update;
+        bool preservedManifest = update.after.family4ResidentCount == before.family4ResidentCount;
+        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
+             ++index) {
+            preservedManifest = update.after.family4Residents[index].objectSoid
+                                    == before.family4Residents[index].objectSoid
+                                && update.after.family4Residents[index].definitionId
+                                       == before.family4Residents[index].definitionId;
+        }
+        if (!valid(update.after) || !preservedManifest
+            || update.characterSoid != itemState->pending.characterSoid
+            || update.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || update.after.family4Version != before.family4Version + 1
+            || !push::append_item_state_notification(
+                scratch, update, itemState->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=item_state result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = update.after;
+    } else if (socket != nullptr) {
+        const SocketPlug& socketPlug = socket->update;
+        bool preservedManifest =
+            socketPlug.after.family4ResidentCount == before.family4ResidentCount;
+        std::size_t accountMatches = 0;
+        std::size_t targetMatches = 0;
+        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
+             ++index) {
+            const ResidentObject& resident = before.family4Residents[index];
+            const ResidentObject& staged = socketPlug.after.family4Residents[index];
+            preservedManifest = staged.objectSoid == resident.objectSoid
+                                && staged.definitionId == resident.definitionId;
+            targetMatches += static_cast<std::size_t>(
+                resident.objectSoid == socketPlug.targetInstanceSoid
+                && resident.definitionId == socketPlug.itemInstanceDefinitionId);
+            accountMatches += static_cast<std::size_t>(resident.objectSoid == socketPlug.accountSoid
+                                                       && resident.definitionId
+                                                              == socketPlug.accountDefinitionId);
+        }
+        if (!valid(socketPlug.after) || !preservedManifest || accountMatches != 1
+            || targetMatches != 1 || socketPlug.accountSoid != socket->pending.accountSoid
+            || socketPlug.characterSoid != socket->pending.characterSoid
+            || socketPlug.targetInstanceSoid != socket->pending.targetInstanceSoid
+            || socketPlug.updatesAccount != socket->pending.profileChanged
+            || socketPlug.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || socketPlug.after.family4Version != before.family4Version + 1
+            || !push::append_socket_plug_notification(
+                scratch, socketPlug, socket->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=socket_plug result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = socketPlug.after;
+        if (socket->pending.targetEquipped && after.family0Active) {
+            CharacterAppearanceRefresh refresh{};
+            if (!stage_character_appearance_refresh(after, socket->pending.characterSoid, refresh)
+                || !push::append_socket_appearance_refresh_notification(
+                    scratch, refresh, socket->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=socket_appearance result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+        if (socket->pending.targetEquipped && after.family3Active) {
+            RosterAppearanceRefresh refresh{};
+            if (!stage_roster_appearance_refresh(
+                    after, socket->pending.characterSoid, false, refresh)
+                || !push::append_socket_roster_refresh_notification(
+                    scratch, refresh, socket->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=socket_roster result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+    } else if (itemAcquisition != nullptr) {
+        const ItemAcquisition& acquisition = itemAcquisition->update;
+        const std::size_t appendedIndex = before.family4ResidentCount;
+        bool preservedManifest = acquisition.after.family4ResidentCount == appendedIndex + 1U;
+        for (std::size_t index = 0; preservedManifest && index < appendedIndex; ++index) {
+            preservedManifest = acquisition.after.family4Residents[index].objectSoid
+                                    == before.family4Residents[index].objectSoid
+                                && acquisition.after.family4Residents[index].definitionId
+                                       == before.family4Residents[index].definitionId;
+        }
+        if (!valid(acquisition.after) || !preservedManifest
+            || acquisition.accountSoid != itemAcquisition->pending.accountSoid
+            || acquisition.characterSoid != itemAcquisition->pending.characterSoid
+            || acquisition.acquiredInstanceSoid != itemAcquisition->pending.acquiredInstanceSoid
+            || acquisition.updatesAccount != itemAcquisition->pending.profileChanged
+            || acquisition.accountSoid != before.family4RootSoid
+            || acquisition.after.family4RootSoid != before.family4RootSoid
+            || before.family4ResidentCount >= before.family4Residents.size()
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || acquisition.after.family4Version != before.family4Version + 1
+            || acquisition.after.family4Residents[appendedIndex].objectSoid
+                   != acquisition.acquiredInstanceSoid
+            || acquisition.after.family4Residents[appendedIndex].definitionId
+                   != acquisition.itemInstanceDefinitionId
+            || !push::append_item_acquisition_notification(
+                scratch, acquisition, itemAcquisition->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=acquire result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = acquisition.after;
+    } else if (profileAcquisition != nullptr) {
+        const ProfileItemAcquisition& acquisition = profileAcquisition->update;
+        const std::size_t priorResidentCount = before.family4ResidentCount;
+        const std::size_t expectedResidentCount =
+            priorResidentCount + static_cast<std::size_t>(acquisition.appendedResident);
+        bool validManifest = expectedResidentCount <= acquisition.after.family4Residents.size()
+                             && acquisition.after.family4ResidentCount == expectedResidentCount;
+        for (std::size_t index = 0; validManifest && index < priorResidentCount; ++index) {
+            validManifest = acquisition.after.family4Residents[index].objectSoid
+                                == before.family4Residents[index].objectSoid
+                            && acquisition.after.family4Residents[index].definitionId
+                                   == before.family4Residents[index].definitionId;
+        }
+        std::size_t priorProfileResidentMatches = 0;
+        for (std::size_t index = 0; index < priorResidentCount; ++index) {
+            const ResidentObject& resident = before.family4Residents[index];
+            priorProfileResidentMatches += static_cast<std::size_t>(
+                acquisition.acquiredInstanceSoid != 0
+                && resident.objectSoid == acquisition.acquiredInstanceSoid
+                && resident.definitionId == acquisition.itemInstanceDefinitionId);
+        }
+        const bool appendedResidentValid =
+            !acquisition.appendedResident
+            || (priorResidentCount < acquisition.after.family4Residents.size()
+                && acquisition.after.family4Residents[priorResidentCount].objectSoid
+                       == acquisition.acquiredInstanceSoid
+                && acquisition.after.family4Residents[priorResidentCount].definitionId
+                       == acquisition.itemInstanceDefinitionId
+                && priorProfileResidentMatches == 0);
+        const bool sourceIdentityValid =
+            acquisition.actionSource == (acquisition.acquiredInstanceSoid != 0)
+            && (acquisition.actionSource
+                    ? acquisition.itemInstanceDefinitionId != 0 && appendedResidentValid
+                          && (acquisition.appendedResident || priorProfileResidentMatches == 1)
+                    : acquisition.itemInstanceDefinitionId == 0 && !acquisition.appendedResident
+                          && priorProfileResidentMatches == 0);
+        if (!valid(acquisition.after) || !validManifest || !sourceIdentityValid
+            || acquisition.accountSoid != profileAcquisition->pending.accountSoid
+            || acquisition.acquiredInstanceSoid != profileAcquisition->pending.acquiredInstanceSoid
+            || acquisition.actionSource != profileAcquisition->pending.actionSource
+            || acquisition.appendedResident
+                   != (profileAcquisition->pending.appended
+                       && profileAcquisition->pending.actionSource)
+            || acquisition.accountSoid != before.family4RootSoid || before.family4ResidentCount == 0
+            || acquisition.accountDefinitionId != before.family4Residents.front().definitionId
+            || acquisition.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || acquisition.after.family4Version != before.family4Version + 1
+            || !push::append_profile_item_acquisition_notification(
+                scratch, acquisition, profileAcquisition->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=profile_acquire result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = acquisition.after;
+    } else if (itemDismantle != nullptr) {
+        const ItemDismantle& dismantle = itemDismantle->update;
+        bool compactedManifest =
+            before.family4ResidentCount != 0
+            && dismantle.after.family4ResidentCount + 1U == before.family4ResidentCount;
+        std::size_t afterIndex = 0;
+        std::size_t removedCount = 0;
+        for (std::size_t beforeIndex = 0;
+             compactedManifest && beforeIndex < before.family4ResidentCount;
+             ++beforeIndex) {
+            const ResidentObject& resident = before.family4Residents[beforeIndex];
+            if (resident.objectSoid == dismantle.dismantledInstanceSoid) {
+                compactedManifest = resident.definitionId == dismantle.itemInstanceDefinitionId;
+                ++removedCount;
+                continue;
+            }
+            if (afterIndex >= dismantle.after.family4ResidentCount) {
+                compactedManifest = false;
+                break;
+            }
+            const ResidentObject& survivor = dismantle.after.family4Residents[afterIndex++];
+            compactedManifest = survivor.objectSoid == resident.objectSoid
+                                && survivor.definitionId == resident.definitionId;
+        }
+        compactedManifest = compactedManifest && removedCount == 1U
+                            && afterIndex == dismantle.after.family4ResidentCount;
+
+        if (!valid(dismantle.after) || !compactedManifest
+            || dismantle.accountSoid != itemDismantle->pending.accountSoid
+            || dismantle.characterSoid != itemDismantle->pending.characterSoid
+            || dismantle.dismantledInstanceSoid != itemDismantle->pending.dismantledInstanceSoid
+            || dismantle.updatesAccount != itemDismantle->pending.profileChanged
+            || dismantle.accountSoid != before.family4RootSoid || before.family4ResidentCount == 0
+            || dismantle.accountDefinitionId != before.family4Residents.front().definitionId
+            || dismantle.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || dismantle.after.family4Version != before.family4Version + 1
+            || !push::append_item_dismantle_notification(
+                scratch, dismantle, itemDismantle->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=dismantle result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = dismantle.after;
+    } else if (vaultTransfer != nullptr) {
+        const VaultTransfer& transfer = vaultTransfer->update;
+        bool preservedManifest = transfer.after.family4ResidentCount == before.family4ResidentCount;
+        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
+             ++index) {
+            preservedManifest =
+                transfer.after.family4Residents[index].objectSoid
+                    == before.family4Residents[index].objectSoid
+                && transfer.after.family4Residents[index].definitionId
+                       == before.family4Residents[index].definitionId;
+        }
+        if (!valid(transfer.after) || !preservedManifest
+            || transfer.accountSoid != vaultTransfer->pending.accountSoid
+            || transfer.characterSoid != vaultTransfer->pending.characterSoid
+            || transfer.instanceSoid != vaultTransfer->pending.instanceSoid
+            || transfer.accountSoid != before.family4RootSoid
+            || transfer.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || transfer.after.family4Version != before.family4Version + 1
+            || !push::append_vault_transfer_notification(
+                scratch, transfer, vaultTransfer->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=vault result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = transfer.after;
+    } else if (abilitySelection != nullptr) {
+        const EquipmentSwap& update = abilitySelection->update;
+        bool preservedManifest = update.after.family4ResidentCount == before.family4ResidentCount;
+        for (std::size_t index = 0; preservedManifest && index < before.family4ResidentCount;
+             ++index) {
+            preservedManifest = update.after.family4Residents[index].objectSoid
+                                    == before.family4Residents[index].objectSoid
+                                && update.after.family4Residents[index].definitionId
+                                       == before.family4Residents[index].definitionId;
+        }
+        if (!valid(update.after) || !preservedManifest
+            || update.characterSoid != abilitySelection->pending.characterSoid
+            || update.after.family4RootSoid != before.family4RootSoid
+            || before.family4Version == (std::numeric_limits<std::int32_t>::max)()
+            || update.after.family4Version != before.family4Version + 1
+            || !push::append_ability_selection_notification(
+                scratch, update, abilitySelection->pending, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=ability result=fail");
+            return false;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = update.after;
+        if (after.family0Active) {
+            CharacterAppearanceRefresh refresh{};
+            if (!stage_character_appearance_refresh(
+                    after, abilitySelection->pending.characterSoid, refresh)
+                || !push::append_ability_appearance_refresh_notification(
+                    scratch, refresh, abilitySelection->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=ability_appearance result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+        if (after.family3Active) {
+            RosterAppearanceRefresh refresh{};
+            if (!stage_roster_appearance_refresh(
+                    after, abilitySelection->pending.characterSoid, false, refresh)
+                || !push::append_ability_roster_refresh_notification(
+                    scratch, refresh, abilitySelection->pending, key, nonce, response, written)) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 "ev=queuez stage=ability_roster result=fail");
+                return false;
+            }
+            after = refresh.after;
+        }
+    } else if (outcome.hasSelectCharacter) {
+        if (!push::append_select_character_notification(
+                scratch, outcome.selectCharacter, key, nonce, response, written)) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             "ev=queuez stage=select result=fail");
+            return true;
+        }
+        middleware::secure_channel::advance_nonce(nonce);
+        after = outcome.selectCharacter.after;
+        const SessionState& bannerBefore = after;
+        SessionState bannerAfter{};
+        if (push::append_banner_move_notification(scratch,
+                                                  bannerBefore,
+                                                  outcome.selectCharacter.selectedCharacterSoid,
+                                                  key,
+                                                  nonce,
+                                                  response,
+                                                  written,
+                                                  bannerAfter)) {
+            after = bannerAfter;
+        }
+        if (after.pendingBannerRoot != 0) {
+            middleware::queuez::Subscription held{};
+            held.familyType = kBannerFamilyType;
+            held.familyRootSoid = after.pendingBannerRoot;
+            SessionState heldAfter{};
+            bool heldRepush = false;
+            bool heldBannerRepush = false;
+            const SessionState heldBefore = after;
+            push::append_queuez_notification(scratch,
+                                             heldBefore,
+                                             held,
+                                             key,
+                                             nonce,
+                                             response,
+                                             written,
+                                             heldAfter,
+                                             heldRepush,
+                                             heldBannerRepush);
+            if (valid(heldAfter)) {
+                after = heldAfter;
+            }
+            if (heldBannerRepush) {
+                armsBannerRepush = true;
+                bannerRoot = held.familyRootSoid;
+            }
+        }
+    } else {
+        return true;
+    }
+    // frame is already written; a mirror that fails validation is logged and dropped, never a refusal
+    publication.hasState = valid(after);
+    if (publication.hasState) {
+        publication.after = after;
+    } else {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         "ev=queuez stage=publish result=unrecorded");
+    }
+    publication.armsFamily4Repush = armsRepush;
+    publication.family4RepushRoot = armsRepush ? outcome.subscription.familyRootSoid : 0;
+    publication.armsBannerRepush = armsBannerRepush && bannerRoot != 0;
+    publication.bannerRepushRoot = publication.armsBannerRepush ? bannerRoot : 0;
+    publication.socialRosterRepushRoot = socialRosterRoot;
+    if (outcome.hasUnsubscription
+        && outcome.unsubscription.familyType == kSocialRosterFamilyType) {
+        publication.socialRosterUnsubscribeRoot = outcome.unsubscription.familyRootSoid;
+    }
+    publication.armsJoinRepush =
+        outcome.hasSubscription
+        && outcome.subscription.familyType == middleware::datagen::kJoinFamily
+        && outcome.subscription.familyRootSoid != 0;
+    publication.joinRepushRoot =
+        publication.armsJoinRepush ? outcome.subscription.familyRootSoid : 0;
+    return true;
+}
+
+} // namespace dawn::server::bap::encrypted::queuez

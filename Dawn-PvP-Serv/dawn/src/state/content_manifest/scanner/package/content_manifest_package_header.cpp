@@ -1,0 +1,104 @@
+#include "content_manifest_package_header.h"
+
+#include <Windows.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string_view>
+
+#include "../../../../core/filesystem/path.h"
+
+namespace dawn::state::content_manifest::scanner::package {
+namespace {
+
+// installed packages for this build carry header version 38
+constexpr std::uint16_t kSupportedHeaderVersion = 38;
+constexpr std::uint16_t kSupportedPlatform = 2;
+constexpr std::size_t kPublicHeaderPrefixSize = 16;
+constexpr std::wstring_view kPackageExtension = L".pkg";
+
+#pragma pack(push, 1)
+struct HeaderPrefix final {
+    std::uint16_t version{};
+    std::uint16_t platform{};
+    std::uint16_t publicPackageId{};
+    // bytes at +0x06 belong to later package validation flags
+    std::uint16_t validationFlags{};
+    std::uint64_t buildSignature{};
+};
+#pragma pack(pop)
+
+static_assert(sizeof(HeaderPrefix) == kPublicHeaderPrefixSize);
+
+[[nodiscard]] std::uint64_t file_time_value(const FILETIME& value) noexcept {
+    return (static_cast<std::uint64_t>(value.dwHighDateTime) << 32U) | value.dwLowDateTime;
+}
+
+[[nodiscard]] bool make_path(std::wstring_view directory,
+                             const ParsedName& parsed,
+                             core::path::Buffer& output) noexcept {
+    if (!core::path::assign(output, directory)) {
+        return false;
+    }
+    if (output.length != 0 && output.chars[output.length - 1] != L'\\'
+        && output.chars[output.length - 1] != L'/') {
+        if (!core::path::append(output, L"\\")) {
+            return false;
+        }
+    }
+    if (output.length + parsed.stemLength + kPackageExtension.size() >= output.chars.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < parsed.stemLength; ++index) {
+        output.chars[output.length++] = static_cast<wchar_t>(parsed.stem[index]);
+    }
+    output.chars[output.length] = L'\0';
+    return core::path::append(output, kPackageExtension);
+}
+
+[[nodiscard]] bool read_prefix(HANDLE file, HeaderPrefix& output) noexcept {
+    output = {};
+    DWORD copied = 0;
+    return ReadFile(file, &output, sizeof output, &copied, nullptr) != FALSE
+           && copied == sizeof output;
+}
+
+} // namespace
+
+bool read_header(std::wstring_view directory, Candidate& candidate) noexcept {
+    candidate.buildSignature = 0;
+    core::path::Buffer path;
+    if (!make_path(directory, candidate.parsed, path)) {
+        return false;
+    }
+    const HANDLE file = CreateFileW(path.chars.data(),
+                                    GENERIC_READ,
+                                    FILE_SHARE_READ,
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                                    nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    LARGE_INTEGER size{};
+    FILETIME writeTime{};
+    HeaderPrefix header{};
+    const bool complete = GetFileSizeEx(file, &size) != FALSE && size.QuadPart >= 0
+                          && static_cast<std::uint64_t>(size.QuadPart) == candidate.fileSize
+                          && GetFileTime(file, nullptr, nullptr, &writeTime) != FALSE
+                          && file_time_value(writeTime) == candidate.lastWriteTime
+                          && read_prefix(file, header) && header.version == kSupportedHeaderVersion
+                          && header.platform == kSupportedPlatform
+                          && header.publicPackageId == candidate.parsed.packageId;
+    CloseHandle(file);
+    if (!complete) {
+        return false;
+    }
+    candidate.buildSignature = header.buildSignature;
+    return true;
+}
+
+} // namespace dawn::state::content_manifest::scanner::package

@@ -1,0 +1,26 @@
+#include "matchmaking_request_parser.h"
+
+#include "field_selection.h"
+
+namespace dawn::middleware::bap::matchmaking::request {
+
+Request parse(std::span<const std::byte> input) noexcept {
+    Root root;
+    if (!parse_root(input, root)) {
+        return {};
+    }
+
+    Request parsed;
+    parsed.kind = root.kind;
+    parsed.hasRequestNonce = root.hasRequestNonce;
+    parsed.requestNonce = root.requestNonce;
+    if (parsed.kind != RequestKind::advertisementUpdate || !root.hasAdvertisementMessage) {
+        return parsed;
+    }
+    if (!parse_update(root.advertisementMessage, parsed.advertisement)) {
+        return {};
+    }
+    return parsed;
+}
+
+} // namespace dawn::middleware::bap::matchmaking::request
