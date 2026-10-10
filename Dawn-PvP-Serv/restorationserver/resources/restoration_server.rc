@@ -1,0 +1,32 @@
+#include <winresrc.h>
+
+#include "../../Dawn/resources/resource.h"
+
+IDR_DEFAULT_SETTINGS RCDATA "../../Dawn/resources/default_settings.json"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION RESTORATION_VER_MAJOR, RESTORATION_VER_MINOR, RESTORATION_VER_PATCH, RESTORATION_VER_BUILD
+PRODUCTVERSION RESTORATION_VER_MAJOR, RESTORATION_VER_MINOR, RESTORATION_VER_PATCH, RESTORATION_VER_BUILD
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "Restoration dedicated server"
+            VALUE "FileVersion", RESTORATION_VER_STRING
+            VALUE "InternalName", "RestorationServer"
+            VALUE "OriginalFilename", "RestorationServer.exe"
+            VALUE "ProductName", "Restoration"
+            VALUE "ProductVersion", RESTORATION_VER_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

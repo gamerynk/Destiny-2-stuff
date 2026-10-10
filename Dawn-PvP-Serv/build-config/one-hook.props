@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Matched native-content release profile. The steady-state function detour redirects HTTP; native UI compatibility guards are unchanged. -->
+  <PropertyGroup>
+    <UniversalClient Condition="'$(UniversalClient)'==''">true</UniversalClient>
+    <NativeNetworkRoutes Condition="'$(NativeNetworkRoutes)'==''">true</NativeNetworkRoutes>
+    <NativeInputPause Condition="'$(NativeInputPause)'==''">true</NativeInputPause>
+    <NativeAsyncOmission Condition="'$(NativeAsyncOmission)'==''">true</NativeAsyncOmission>
+    <NativeSetCursorOmission Condition="'$(NativeSetCursorOmission)'==''">true</NativeSetCursorOmission>
+    <NativeClipOmission Condition="'$(NativeClipOmission)'==''">true</NativeClipOmission>
+    <NativeWindowPresentation Condition="'$(NativeWindowPresentation)'==''">true</NativeWindowPresentation>
+    <NativeKeyFocusOmission Condition="'$(NativeKeyFocusOmission)'==''">true</NativeKeyFocusOmission>
+    <NativePackageExtendedHash Condition="'$(NativePackageExtendedHash)'==''">true</NativePackageExtendedHash>
+    <NativePackageCachedHash Condition="'$(NativePackageCachedHash)'==''">true</NativePackageCachedHash>
+    <NativePackageTrust Condition="'$(NativePackageTrust)'==''">true</NativePackageTrust>
+    <NativeCombatPriority Condition="'$(NativeCombatPriority)'==''">true</NativeCombatPriority>
+    <NativeMatchPresentation Condition="'$(NativeMatchPresentation)'==''">true</NativeMatchPresentation>
+    <NativeWeaponPendingOmission Condition="'$(NativeWeaponPendingOmission)'==''">true</NativeWeaponPendingOmission>
+    <NativeWeaponApplyOmission Condition="'$(NativeWeaponApplyOmission)'==''">true</NativeWeaponApplyOmission>
+    <NativeAmmoObserverTrial Condition="'$(NativeAmmoObserverTrial)'==''">true</NativeAmmoObserverTrial>
+    <NativeAmmoHandoffTrial Condition="'$(NativeAmmoHandoffTrial)'==''">true</NativeAmmoHandoffTrial>
+    <NativeCharacterSelection Condition="'$(NativeCharacterSelection)'==''">true</NativeCharacterSelection>
+    <NativeTowerCompletion Condition="'$(NativeTowerCompletion)'==''">true</NativeTowerCompletion>
+    <NativeRawMousePause Condition="'$(NativeRawMousePause)'==''">true</NativeRawMousePause>
+    <NativeInvestmentInvalidation Condition="'$(NativeInvestmentInvalidation)'==''">true</NativeInvestmentInvalidation>
+    <NativeBitmapReference Condition="'$(NativeBitmapReference)'==''">true</NativeBitmapReference>
+    <NativeProfileSetup Condition="'$(NativeProfileSetup)'==''">true</NativeProfileSetup>
+    <NativeSteamCertificate Condition="'$(NativeSteamCertificate)'==''">true</NativeSteamCertificate>
+    <NativeSteamAuthentication Condition="'$(NativeSteamAuthentication)'==''">true</NativeSteamAuthentication>
+    <NativePlayerBody Condition="'$(NativePlayerBody)'==''">true</NativePlayerBody>
+    <NativeOrbitHandoff Condition="'$(NativeOrbitHandoff)'==''">true</NativeOrbitHandoff>
+    <TransientRenderTarget Condition="'$(TransientRenderTarget)'==''">true</TransientRenderTarget>
+    <NativeResizeOmission Condition="'$(NativeResizeOmission)'==''">true</NativeResizeOmission>
+    <NativeCompositionPolicy Condition="'$(NativeCompositionPolicy)'==''">true</NativeCompositionPolicy>
+    <NativeFireteamCallback Condition="'$(NativeFireteamCallback)'==''">true</NativeFireteamCallback>
+    <NativeOrbitSliceSet Condition="'$(NativeOrbitSliceSet)'==''">true</NativeOrbitSliceSet>
+    <NativeCameraObservers Condition="'$(NativeCameraObservers)'==''">true</NativeCameraObservers>
+  </PropertyGroup>
+</Project>

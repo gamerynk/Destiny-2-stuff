@@ -1,0 +1,11 @@
+# Exact reviewed false positives: synthetic protocol constants and an upstream enum comparison.
+# tests/activity_membership_citizen_contract_test.cpp
+tests/activity_membership_citizen_contract_test.cpp:generic-api-key:23
+# tests/activity_account_context_self_test.h
+tests/activity_account_context_self_test.h:generic-api-key:98
+# tests/joined_player_detail_wire_contract_test.cpp
+tests/joined_player_detail_wire_contract_test.cpp:generic-api-key:54
+# tests/shared_membership_wire_contract_test.cpp
+tests/shared_membership_wire_contract_test.cpp:generic-api-key:22
+# dawn/vendor/imgui/imgui.cpp
+dawn/vendor/imgui/imgui.cpp:generic-api-key:4372
